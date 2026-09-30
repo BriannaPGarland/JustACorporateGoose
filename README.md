@@ -77,6 +77,16 @@ npm run dist
 Generated installers and unpacked applications are written to `release\` and
 must not be committed.
 
+## Brand reference and layout
+
+These are the original reference screenshots for the brand and layout direction,
+including the full board composition, light-blue background, and the overall
+visual structure.
+
+<p align="center">
+  <img src="docs/images/brand-layout-reference.png" alt="Original brand reference showing the full goose board with light blue background and full layout" width="100%" />
+</p>
+
 ## Goose brand artwork
 
 The app changes the goose artwork to match the current activity, reminder, or
