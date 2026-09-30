@@ -1,0 +1,43 @@
+html {
+  min-width: 320px;
+  min-height: 100%;
+  background: #fff8f3;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  color: #41374f;
+  background: #fff8f3;
+  font-family:
+    "Segoe UI Variable",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html:has(.mini-timer),
+html:has(.mini-timer) body,
+body:has(.mini-timer),
+#root:has(.mini-timer),
+html:has(.reminder-popup),
+html:has(.reminder-popup) body,
+body:has(.reminder-popup),
+#root:has(.reminder-popup) {
+  overflow: hidden;
+  background: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(129, 103, 216, 0.35);
+  outline-offset: 2px;
+}

@@ -1,0 +1,9 @@
+{
+  "displayName": "Your name",
+  "azureDevOps": {
+    "organizationUrl": "https://dev.azure.com/your-organization",
+    "project": "Your project",
+    "repository": "Your repository",
+    "currentUser": "you@example.com"
+  }
+}
