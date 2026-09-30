@@ -34,6 +34,77 @@ function getLocalConfig() {
   }
 }
 
+function normalizeLocalPreferences(config = getLocalConfig()) {
+  const azureDevOps = config.azureDevOps || {}
+  return {
+    setupComplete: config.setupComplete === true,
+    displayName:
+      typeof config.displayName === 'string' ? config.displayName.trim() : '',
+    azureDevOps: {
+      organizationUrl:
+        typeof azureDevOps.organizationUrl === 'string'
+          ? azureDevOps.organizationUrl.trim()
+          : '',
+      project:
+        typeof azureDevOps.project === 'string' ? azureDevOps.project.trim() : '',
+      repository:
+        typeof azureDevOps.repository === 'string'
+          ? azureDevOps.repository.trim()
+          : '',
+      currentUser:
+        typeof azureDevOps.currentUser === 'string'
+          ? azureDevOps.currentUser.trim()
+          : '',
+    },
+  }
+}
+
+function saveLocalPreferences(preferences) {
+  const normalized = normalizeLocalPreferences(preferences)
+  const requiredValues = [
+    normalized.displayName,
+    normalized.azureDevOps.organizationUrl,
+    normalized.azureDevOps.project,
+    normalized.azureDevOps.repository,
+    normalized.azureDevOps.currentUser,
+  ]
+  if (requiredValues.some((value) => value === '')) {
+    throw new Error('Complete every setup field before continuing.')
+  }
+
+  let organizationUrl
+  try {
+    organizationUrl = new URL(normalized.azureDevOps.organizationUrl)
+  } catch {
+    throw new Error('Enter a valid Azure DevOps organization URL.')
+  }
+  if (!['https:', 'http:'].includes(organizationUrl.protocol)) {
+    throw new Error('The Azure DevOps organization URL must use HTTP or HTTPS.')
+  }
+  if (!normalized.azureDevOps.currentUser.includes('@')) {
+    throw new Error('Enter the email address used by your Azure DevOps account.')
+  }
+
+  const configPath = path.join(app.getPath('userData'), 'local-config.json')
+  const temporaryPath = `${configPath}.tmp`
+  const nextConfig = {
+    ...getLocalConfig(),
+    setupComplete: true,
+    displayName: normalized.displayName,
+    azureDevOps: {
+      ...normalized.azureDevOps,
+      organizationUrl: organizationUrl.toString().replace(/\/+$/, ''),
+    },
+  }
+  fs.mkdirSync(path.dirname(configPath), { recursive: true })
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(nextConfig, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  })
+  fs.renameSync(temporaryPath, configPath)
+  return normalizeLocalPreferences(nextConfig)
+}
+
 function requireAzureDevOpsConfig() {
   const azureDevOps = getLocalConfig().azureDevOps
   const requiredFields = ['organizationUrl', 'project', 'repository', 'currentUser']
@@ -108,12 +179,12 @@ function roundedWindowShape(width, height, radius) {
   return rects
 }
 
-function miniWindowWidth(payload) {
-  return payload && !payload.isPaused && !payload.isReady ? 490 : 390
+function miniWindowWidth(_payload) {
+  return 560
 }
 
-function miniWindowHeight(payload) {
-  return payload && !payload.isPaused && !payload.isReady ? 200 : 190
+function miniWindowHeight(_payload) {
+  return 210
 }
 
 function keepMiniWindowOnTop(window) {
@@ -134,13 +205,21 @@ function resizeMiniWindow(window, payload) {
   const display = screen.getPrimaryDisplay()
   const width = miniWindowWidth(payload)
   const height = miniWindowHeight(payload)
+  const currentBounds = window.getBounds()
+  const x = Math.min(
+    display.workArea.x + display.workArea.width - width,
+    Math.max(display.workArea.x, currentBounds.x),
+  )
+  const y = Math.min(
+    display.workArea.y + display.workArea.height - height,
+    Math.max(display.workArea.y, currentBounds.y),
+  )
   window.setBounds({
     width,
     height,
-    x: display.workArea.x + display.workArea.width - width - 18,
-    y: display.workArea.y + 18,
+    x,
+    y,
   })
-  window.setShape(roundedWindowShape(width, height, 24))
 }
 
 function createMiniWindow() {
@@ -157,10 +236,10 @@ function createMiniWindow() {
     height,
     x: display.workArea.x + display.workArea.width - width - 18,
     y: display.workArea.y + 18,
-    minWidth: 390,
-    minHeight: 190,
-    maxWidth: 490,
-    maxHeight: 200,
+    minWidth: 560,
+    minHeight: 210,
+    maxWidth: 560,
+    maxHeight: 210,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -180,7 +259,6 @@ function createMiniWindow() {
 
   keepMiniWindowOnTop(miniWindow)
   miniWindow.setIgnoreMouseEvents(false)
-  miniWindow.setShape(roundedWindowShape(width, height, 24))
 
   if (isDev) {
     miniWindow.loadURL(rendererUrl('mini'))
@@ -224,23 +302,49 @@ function sendActiveReminder() {
   reminderWindow.webContents.send('reminder-update', activeReminder)
 }
 
+function preferredReminderDisplay() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return screen.getDisplayMatching(mainWindow.getBounds())
+  }
+
+  return screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+}
+
+function reminderWindowBounds(display) {
+  const workArea = display.workArea
+  const horizontalMargin = Math.min(40, Math.max(16, Math.floor(workArea.width * 0.04)))
+  const verticalMargin = Math.min(40, Math.max(16, Math.floor(workArea.height * 0.04)))
+  const maximumWidth = workArea.width >= 1600 ? 760 : 680
+  const maximumHeight = workArea.height >= 800 ? 420 : 360
+  const width = Math.min(maximumWidth, workArea.width - horizontalMargin * 2)
+  const height = Math.min(maximumHeight, workArea.height - verticalMargin * 2)
+
+  return {
+    width,
+    height,
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + Math.round((workArea.height - height) / 2),
+  }
+}
+
+function resizeReminderWindow(window) {
+  if (!window || window.isDestroyed()) {
+    return
+  }
+
+  const bounds = reminderWindowBounds(preferredReminderDisplay())
+  window.setBounds(bounds)
+  window.setShape(roundedWindowShape(bounds.width, bounds.height, 32))
+}
+
 function createReminderWindow() {
   if (reminderWindow && !reminderWindow.isDestroyed()) {
     return reminderWindow
   }
 
-  const display = screen.getPrimaryDisplay()
-  const width = Math.min(760, display.workArea.width - 80)
-  const height = Math.min(420, display.workArea.height - 80)
+  const bounds = reminderWindowBounds(preferredReminderDisplay())
   reminderWindow = new BrowserWindow({
-    width,
-    height,
-    x: display.workArea.x + Math.round((display.workArea.width - width) / 2),
-    y: display.workArea.y + Math.round((display.workArea.height - height) / 2),
-    minWidth: width,
-    minHeight: height,
-    maxWidth: width,
-    maxHeight: height,
+    ...bounds,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -260,7 +364,7 @@ function createReminderWindow() {
   })
 
   keepReminderWindowOnTop(reminderWindow)
-  reminderWindow.setShape(roundedWindowShape(width, height, 32))
+  reminderWindow.setShape(roundedWindowShape(bounds.width, bounds.height, 32))
 
   if (isDev) {
     reminderWindow.loadURL(rendererUrl('reminder'))
@@ -297,6 +401,7 @@ function showNextReminder() {
 
   activeReminder = reminderQueue.shift()
   const window = createReminderWindow()
+  resizeReminderWindow(window)
   if (!window.webContents.isLoading()) {
     sendActiveReminder()
   }
@@ -681,10 +786,11 @@ ipcMain.handle('get-reviewable-prs', async () => {
 })
 
 ipcMain.handle('get-local-preferences', () => {
-  const displayName = getLocalConfig().displayName
-  return {
-    displayName: typeof displayName === 'string' ? displayName : '',
-  }
+  return normalizeLocalPreferences()
+})
+
+ipcMain.handle('save-local-preferences', (_event, preferences) => {
+  return saveLocalPreferences(preferences)
 })
 
 ipcMain.handle('open-external', async (_event, url) => {

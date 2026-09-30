@@ -1,5 +1,7 @@
 import {
+  type CSSProperties,
   type DragEvent,
+  type FormEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -7,6 +9,10 @@ import {
   useState,
 } from 'react'
 import './App.css'
+import {
+  completionStreakAfterCompletingDay,
+  completionStreakForNewDay,
+} from './completionStreak'
 import appIconUrl from '../build/icon.png'
 import angryGooseUrl from './assets/goose/angry.png'
 import celebratingGooseUrl from './assets/goose/celebrating.png'
@@ -30,6 +36,7 @@ import {
   calculateHydrationUpdate,
   WATER_CUP_OUNCES,
 } from './hydration'
+import { movementMeetingPoints } from './wellnessRewards'
 
 type Screen = 'welcome' | 'morning' | 'planning' | 'focus' | 'day-complete'
 type TaskStatus = 'todo' | 'done'
@@ -132,6 +139,8 @@ interface DailyState {
   dismissedReminders: string[]
   dismissedMovementPrompts: string[]
   exitedMeetingKeys: string[]
+  movementMeetingStartedKeys: string[]
+  rewardedMovementMeetingKeys: string[]
   meetings: CalendarMeeting[]
   meetingsLoaded: boolean
   calendarError: string
@@ -139,12 +148,16 @@ interface DailyState {
   lunchDurationMinutes: 0 | 30 | 60
   lunchInProgress: boolean
   lunchCompleted: boolean
+  lunchesCompleted: number
   workdayMinutes: number
   waterGoalOunces: number
+  waterReminderCount: number
   waterScoringGoalOunces: number
   waterConsumedOunces: number
   waterScoredOunces: number
   waterCupBonusesAwarded: number
+  waterGoalAwardedToday: boolean
+  waterGoalsCompleted: number
   prReviewStart: string
   pauseReason?:
     | 'manual'
@@ -170,6 +183,11 @@ interface DailyState {
   completedTaskHistory: CompletedTaskRecord[]
   dayCompletedAt?: number
   dayCompletionPoints?: number
+  dailyCompletionStreak: number
+  lastCompletedDay?: string
+  standingMeetingsCompleted: number
+  walkingMeetingsCompleted: number
+  onTimeDaysCompleted: number
 }
 
 type ScoreTrendRange = 'week' | 'month' | 'year'
@@ -768,6 +786,82 @@ function getBadgeStatuses(state: DailyState): BadgeStatus[] {
     },
   ]
 
+  const wellnessBadgeGroups = [
+    {
+      id: 'standing-meetings',
+      titles: [
+        'Stand Tall',
+        'Standing Flock',
+        'Upright Regular',
+        'Standing Ovation',
+      ],
+      description: 'Complete standing meetings.',
+      icon: '🧍',
+      progress: state.standingMeetingsCompleted,
+    },
+    {
+      id: 'walking-meetings',
+      titles: [
+        'First Walking Meeting',
+        'Walking Flock',
+        'Meeting Migration',
+        'Road Goose',
+      ],
+      description: 'Complete walking meetings.',
+      icon: '🚶',
+      progress: state.walkingMeetingsCompleted,
+    },
+    {
+      id: 'water-goals',
+      titles: [
+        'First Sip',
+        'Hydrated Honker',
+        'Water Waddler',
+        'Hydration Hero',
+      ],
+      description: 'Reach the daily water goal.',
+      icon: '💧',
+      progress: state.waterGoalsCompleted,
+    },
+    {
+      id: 'lunches',
+      titles: [
+        'Lunch Break',
+        'Lunch Regular',
+        'Well-Fed Goose',
+        'Lunch Legend',
+      ],
+      description: 'Complete planned lunches.',
+      icon: '🥪',
+      progress: state.lunchesCompleted,
+    },
+    {
+      id: 'on-time-days',
+      titles: [
+        'Right on Time',
+        'Clockwork Goose',
+        'Punctual Waddler',
+        'On-Time Legend',
+      ],
+      description: 'Complete the day on time.',
+      icon: '⏰',
+      progress: state.onTimeDaysCompleted,
+    },
+  ]
+  const wellnessBadgeTargets = [1, 5, 20, 50]
+  wellnessBadgeGroups.forEach((group) => {
+    wellnessBadgeTargets.forEach((target, index) => {
+      definitions.push({
+        id: `${group.id}-${target}`,
+        title: group.titles[index],
+        description: `${group.description} ${target} time${target === 1 ? '' : 's'}.`,
+        icon: group.icon,
+        progress: group.progress,
+        target,
+      })
+    })
+  })
+
   if (behaviorBaseline.calibrated) {
     definitions.push(
       {
@@ -907,6 +1001,8 @@ function loadState(): DailyState {
       dismissedReminders: [],
       dismissedMovementPrompts: [],
       exitedMeetingKeys: [],
+      movementMeetingStartedKeys: [],
+      rewardedMovementMeetingKeys: [],
       meetings: [],
       meetingsLoaded: false,
       calendarError: '',
@@ -914,12 +1010,16 @@ function loadState(): DailyState {
       lunchDurationMinutes: 60,
       lunchInProgress: false,
       lunchCompleted: false,
+      lunchesCompleted: 0,
       workdayMinutes: DEFAULT_WORKDAY_MINUTES,
       waterGoalOunces: 0,
+      waterReminderCount: 4,
       waterScoringGoalOunces: 0,
       waterConsumedOunces: 0,
       waterScoredOunces: 0,
       waterCupBonusesAwarded: 0,
+      waterGoalAwardedToday: false,
+      waterGoalsCompleted: 0,
       prReviewStart: '09:30',
       endOfDayCelebrated: false,
       endOfDayDismissed: false,
@@ -935,6 +1035,10 @@ function loadState(): DailyState {
       scoreHistory: [],
       earnedBadgeIds: [],
       completedTaskHistory: [],
+      dailyCompletionStreak: 0,
+      standingMeetingsCompleted: 0,
+      walkingMeetingsCompleted: 0,
+      onTimeDaysCompleted: 0,
     }
   }
 
@@ -949,14 +1053,22 @@ function loadState(): DailyState {
         })),
         dismissedMovementPrompts: previous.dismissedMovementPrompts || [],
         exitedMeetingKeys: previous.exitedMeetingKeys || [],
+        movementMeetingStartedKeys: previous.movementMeetingStartedKeys || [],
+        rewardedMovementMeetingKeys: previous.rewardedMovementMeetingKeys || [],
         meetingsLoaded: previous.meetingsLoaded || false,
         calendarError: previous.calendarError || '',
         lunchStart: previous.lunchStart || '12:00',
         lunchDurationMinutes: previous.lunchDurationMinutes ?? 60,
         lunchInProgress: previous.lunchInProgress || false,
         lunchCompleted: previous.lunchCompleted || false,
+        lunchesCompleted: previous.lunchesCompleted || 0,
         workdayMinutes: previous.workdayMinutes || DEFAULT_WORKDAY_MINUTES,
         waterGoalOunces: previous.waterGoalOunces ?? 0,
+        waterReminderCount:
+          previous.waterReminderCount ??
+          (previous.waterGoalOunces > 0
+            ? Math.max(1, Math.ceil(previous.waterGoalOunces / 8))
+            : 4),
         waterScoringGoalOunces:
           previous.waterScoringGoalOunces ?? previous.waterGoalOunces ?? 0,
         waterConsumedOunces: previous.waterConsumedOunces ?? 0,
@@ -965,6 +1077,8 @@ function loadState(): DailyState {
         waterCupBonusesAwarded:
           previous.waterCupBonusesAwarded ??
           Math.floor((previous.waterConsumedOunces ?? 0) / WATER_CUP_OUNCES),
+        waterGoalAwardedToday: previous.waterGoalAwardedToday || false,
+        waterGoalsCompleted: previous.waterGoalsCompleted || 0,
         prReviewStart: previous.prReviewStart || '09:30',
         endOfDayCelebrated: previous.endOfDayCelebrated || false,
         endOfDayDismissed: previous.endOfDayDismissed || false,
@@ -986,6 +1100,14 @@ function loadState(): DailyState {
         ),
         dayCompletedAt: previous.dayCompletedAt,
         dayCompletionPoints: previous.dayCompletionPoints,
+        dailyCompletionStreak:
+          previous.dailyCompletionStreak ?? (previous.dayCompletedAt ? 1 : 0),
+        lastCompletedDay:
+          previous.lastCompletedDay ??
+          (previous.dayCompletedAt ? previous.date : undefined),
+        standingMeetingsCompleted: previous.standingMeetingsCompleted || 0,
+        walkingMeetingsCompleted: previous.walkingMeetingsCompleted || 0,
+        onTimeDaysCompleted: previous.onTimeDaysCompleted || 0,
         tasks: previous.tasks.map((task) => {
           const removeLegacySteps = hasLegacySuggestedBreakdown(task)
           return {
@@ -1078,6 +1200,12 @@ function loadState(): DailyState {
       previous.date,
       previous.dayCompletedAt || Date.now(),
     )
+    const dailyCompletionStreak = completionStreakForNewDay(
+      previous.date,
+      today,
+      Boolean(previous.dayCompletedAt),
+      previous.dailyCompletionStreak ?? (previous.dayCompletedAt ? 1 : 0),
+    )
 
     return {
       date: today,
@@ -1092,6 +1220,8 @@ function loadState(): DailyState {
       dismissedReminders: [],
       dismissedMovementPrompts: [],
       exitedMeetingKeys: [],
+      movementMeetingStartedKeys: [],
+      rewardedMovementMeetingKeys: [],
       meetings: [],
       meetingsLoaded: false,
       calendarError: '',
@@ -1099,12 +1229,16 @@ function loadState(): DailyState {
       lunchDurationMinutes: previous.lunchDurationMinutes ?? 60,
       lunchInProgress: false,
       lunchCompleted: false,
+      lunchesCompleted: previous.lunchesCompleted || 0,
       workdayMinutes: previous.workdayMinutes || DEFAULT_WORKDAY_MINUTES,
       waterGoalOunces: previous.waterGoalOunces ?? 0,
+      waterReminderCount: previous.waterReminderCount ?? 4,
       waterScoringGoalOunces: previous.waterGoalOunces ?? 0,
       waterConsumedOunces: 0,
       waterScoredOunces: 0,
       waterCupBonusesAwarded: 0,
+      waterGoalAwardedToday: false,
+      waterGoalsCompleted: previous.waterGoalsCompleted || 0,
       prReviewStart: previous.prReviewStart || '09:30',
       endOfDayCelebrated: false,
       endOfDayDismissed: false,
@@ -1122,6 +1256,13 @@ function loadState(): DailyState {
       completedTaskHistory,
       dayCompletedAt: undefined,
       dayCompletionPoints: undefined,
+      dailyCompletionStreak,
+      lastCompletedDay:
+        previous.lastCompletedDay ??
+        (previous.dayCompletedAt ? previous.date : undefined),
+      standingMeetingsCompleted: previous.standingMeetingsCompleted || 0,
+      walkingMeetingsCompleted: previous.walkingMeetingsCompleted || 0,
+      onTimeDaysCompleted: previous.onTimeDaysCompleted || 0,
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY)
@@ -1285,12 +1426,20 @@ function applyWaterConsumption(
   timestamp = Date.now(),
 ): DailyState {
   const hydrationUpdate = calculateHydrationUpdate(current, requestedOunces)
+  const completedWaterGoal =
+    !current.waterGoalAwardedToday &&
+    current.waterGoalOunces > 0 &&
+    hydrationUpdate.waterConsumedOunces >= current.waterGoalOunces
   let next: DailyState = {
     ...current,
     waterScoringGoalOunces: hydrationUpdate.waterScoringGoalOunces,
     waterConsumedOunces: hydrationUpdate.waterConsumedOunces,
     waterScoredOunces: hydrationUpdate.waterScoredOunces,
     waterCupBonusesAwarded: hydrationUpdate.waterCupBonusesAwarded,
+    waterGoalAwardedToday:
+      current.waterGoalAwardedToday || completedWaterGoal,
+    waterGoalsCompleted:
+      current.waterGoalsCompleted + (completedWaterGoal ? 1 : 0),
   }
 
   if (hydrationUpdate.ouncePoints > 0) {
@@ -1457,6 +1606,7 @@ function completeLunchState(current: DailyState, changedAt: number): DailyState 
     timeOnDate(current.date, current.lunchStart) +
     current.lunchDurationMinutes * 60 * 1000
   const completedEarly = changedAt < lunchEnd
+  const completedLunchNow = !current.lunchCompleted
   let nextState: DailyState
 
   if (!current.isPaused || current.pauseReason !== 'calendar') {
@@ -1464,6 +1614,8 @@ function completeLunchState(current: DailyState, changedAt: number): DailyState 
       ...current,
       lunchInProgress: false,
       lunchCompleted: true,
+      lunchesCompleted:
+        current.lunchesCompleted + (completedLunchNow ? 1 : 0),
     }
   } else {
     const lunchPauseSeconds = current.pauseStartedAt
@@ -1473,6 +1625,8 @@ function completeLunchState(current: DailyState, changedAt: number): DailyState 
       ...current,
       lunchInProgress: false,
       lunchCompleted: true,
+      lunchesCompleted:
+        current.lunchesCompleted + (completedLunchNow ? 1 : 0),
       isPaused: false,
       pauseStartedAt: undefined,
       pausedSeconds: current.pausedSeconds + lunchPauseSeconds,
@@ -1793,7 +1947,7 @@ function MiniTimer() {
           src={miniGooseUrl}
           alt=""
           style={{
-            left: `clamp(25px, ${progress}%, calc(100% - 25px))`,
+            left: `clamp(44px, ${progress}%, calc(100% - 44px))`,
           }}
         />
       </div>
@@ -1817,9 +1971,6 @@ function MiniTimer() {
             +15m previous
           </button>
         )}
-        <span className="mini-drag-handle" title="Drag to move Just a Corporate Goose">
-          ⠿ Move
-        </span>
       </div>
     </main>
   )
@@ -2143,7 +2294,7 @@ function DailyGooseApp() {
   }
 
   logOneDrinkRef.current = () => {
-    const servings = Math.max(1, Math.ceil(state.waterGoalOunces / 8))
+    const servings = Math.max(1, state.waterReminderCount)
     const servingOunces = state.waterGoalOunces / servings
     logWater(state.waterConsumedOunces + servingOunces)
   }
@@ -2492,6 +2643,95 @@ function DailyGooseApp() {
     state.lunchCompleted,
     state.lunchInProgress,
     state.lunchDurationMinutes,
+  ])
+
+  useEffect(() => {
+    if (!activeMeeting || activeMeeting.movementMode === 'none') {
+      return
+    }
+
+    const meetingKey = `${activeMeeting.id}-${activeMeeting.start}`
+    if (state.movementMeetingStartedKeys.includes(meetingKey)) {
+      return
+    }
+
+    updateState((current) => ({
+      ...current,
+      movementMeetingStartedKeys: current.movementMeetingStartedKeys.includes(
+        meetingKey,
+      )
+        ? current.movementMeetingStartedKeys
+        : [...current.movementMeetingStartedKeys, meetingKey],
+    }))
+  }, [activeMeeting, state.movementMeetingStartedKeys])
+
+  useEffect(() => {
+    const completedMovementMeetings = state.meetings.filter((meeting) => {
+      const meetingKey = `${meeting.id}-${meeting.start}`
+      return (
+        meeting.movementMode !== 'none' &&
+        now >= new Date(meeting.end).getTime() &&
+        state.movementMeetingStartedKeys.includes(meetingKey) &&
+        !state.rewardedMovementMeetingKeys.includes(meetingKey)
+      )
+    })
+    if (completedMovementMeetings.length === 0) {
+      return
+    }
+
+    const totalPoints = completedMovementMeetings.reduce(
+      (total, meeting) => total + movementMeetingPoints(meeting.movementMode),
+      0,
+    )
+    updateState((current) => {
+      let next = current
+      completedMovementMeetings.forEach((meeting, index) => {
+        const meetingKey = `${meeting.id}-${meeting.start}`
+        if (next.rewardedMovementMeetingKeys.includes(meetingKey)) {
+          return
+        }
+
+        const isWalkingMeeting = meeting.movementMode === 'walk'
+        next = {
+          ...next,
+          rewardedMovementMeetingKeys: [
+            ...next.rewardedMovementMeetingKeys,
+            meetingKey,
+          ],
+          standingMeetingsCompleted:
+            next.standingMeetingsCompleted + (isWalkingMeeting ? 0 : 1),
+          walkingMeetingsCompleted:
+            next.walkingMeetingsCompleted + (isWalkingMeeting ? 1 : 0),
+        }
+        next = applyScoreChange(
+          next,
+          movementMeetingPoints(meeting.movementMode),
+          isWalkingMeeting
+            ? 'Completed a walking meeting'
+            : 'Completed a standing meeting',
+          Date.now() + index,
+        )
+      })
+      return next
+    })
+    setCelebration(
+      completedMovementMeetings.length === 1
+        ? completedMovementMeetings[0].movementMode === 'walk'
+          ? '🚶 Walking meeting complete! +200 points'
+          : '🧍 Standing meeting complete! +100 points'
+        : `🪿 Movement meetings complete! +${totalPoints} points`,
+    )
+    setScoreBurst(totalPoints)
+    setConfettiActive(true)
+    playGooseChime('complete')
+    window.setTimeout(() => setCelebration(''), 4000)
+    window.setTimeout(() => setScoreBurst(undefined), 1800)
+    window.setTimeout(() => setConfettiActive(false), 2600)
+  }, [
+    now,
+    state.meetings,
+    state.movementMeetingStartedKeys,
+    state.rewardedMovementMeetingKeys,
   ])
 
   const activeInterruption = useMemo(
@@ -2899,7 +3139,7 @@ function DailyGooseApp() {
       return
     }
 
-    const servings = Math.max(1, Math.ceil(state.waterGoalOunces / 8))
+    const servings = Math.max(1, state.waterReminderCount)
     const servingOunces = state.waterGoalOunces / servings
     const reminderInterval = (dayEnd - dayStart) / (servings + 1)
     const reminderNumber = Math.floor((now - dayStart) / reminderInterval)
@@ -2907,7 +3147,7 @@ function DailyGooseApp() {
       return
     }
 
-    const key = `water-${state.date}-${state.waterGoalOunces}-${reminderNumber}`
+    const key = `water-${state.date}-${state.waterGoalOunces}-${servings}-${reminderNumber}`
     if (notifiedRef.current.has(key)) {
       return
     }
@@ -2915,9 +3155,10 @@ function DailyGooseApp() {
     notifiedRef.current.add(key)
     notifyWithChime({
       title: 'Water break',
-      body: `Drink ${Math.round(servingOunces * 10) / 10} oz. Acknowledging adds it to your cup (${reminderNumber} of ${servings}).`,
-      actionLabel: 'Log my water',
-      actionType: 'log-water',
+      body: `Drink ${Math.round(servingOunces * 10) / 10} oz. Log it now or acknowledge without changing your total (${reminderNumber} of ${servings}).`,
+      actionLabel: 'Acknowledge',
+      secondaryActionLabel: 'Log my water',
+      secondaryActionType: 'log-water',
     })
   }, [
     dayEnd,
@@ -2926,6 +3167,7 @@ function DailyGooseApp() {
     state.date,
     state.screen,
     state.waterGoalOunces,
+    state.waterReminderCount,
   ])
 
   useEffect(() => {
@@ -3509,6 +3751,14 @@ function DailyGooseApp() {
         isPaused: true,
         pauseStartedAt: undefined,
         pauseReason: 'end-of-day',
+        dailyCompletionStreak: completionStreakAfterCompletingDay(
+          committed.date,
+          committed.dailyCompletionStreak,
+          committed.lastCompletedDay,
+        ),
+        lastCompletedDay: committed.date,
+        onTimeDaysCompleted:
+          committed.onTimeDaysCompleted + (lateHours === 0 ? 1 : 0),
       }
       return completionPoints > 0
         ? applyScoreChange(
@@ -3995,10 +4245,21 @@ function DailyGooseApp() {
           ))}
         </div>
       )}
-      <button className="score-chip" onClick={() => setShowScoreboard(true)}>
-        <span>⭐ {state.score} pts</span>
-        <small>Best {highScore}</small>
-      </button>
+      <div className="game-status-chips">
+        <div
+          className="streak-chip"
+          title={`${state.dailyCompletionStreak} consecutive completed day${
+            state.dailyCompletionStreak === 1 ? '' : 's'
+          }`}
+        >
+          <span>🔥 {state.dailyCompletionStreak}</span>
+          <small>day streak</small>
+        </div>
+        <button className="score-chip" onClick={() => setShowScoreboard(true)}>
+          <span>⭐ {state.score} pts</span>
+          <small>Best {highScore}</small>
+        </button>
+      </div>
 
       {showScoreboard && (
         <div className="scoreboard-overlay" role="dialog" aria-modal="true">
@@ -4006,7 +4267,30 @@ function DailyGooseApp() {
             <header>
               <div>
                 <p className="eyebrow">JUST A CORPORATE GOOSE GAME</p>
-                <h1>Your waddle log</h1>
+                <div className="waddle-log-title-row">
+                  <h1>Your waddle log</h1>
+                  <span
+                    className="duck-footprint-trail"
+                    aria-label="Animated duck footprints"
+                  >
+                    {Array.from({ length: 5 }, (_, index) => (
+                      <svg
+                        className="duck-footprint"
+                        key={index}
+                        style={
+                          {
+                            '--footprint-index': index,
+                          } as CSSProperties
+                        }
+                        viewBox="0 0 20 24"
+                        aria-hidden="true"
+                      >
+                        <path d="M10 18V7M10 13L4 6M10 13L16 6" />
+                        <ellipse cx="10" cy="20" rx="3.2" ry="2.4" />
+                      </svg>
+                    ))}
+                  </span>
+                </div>
                 <p>Build momentum one focused waddle at a time.</p>
               </div>
               <button
@@ -4019,6 +4303,11 @@ function DailyGooseApp() {
             </header>
 
             <div className="score-summary-grid">
+              <div>
+                <span>Daily usage streak</span>
+                <strong>🔥 {state.dailyCompletionStreak}</strong>
+                <small>completed days in a row</small>
+              </div>
               <div>
                 <span>Today</span>
                 <strong>{state.score}</strong>
@@ -4614,9 +4903,26 @@ function DailyGooseApp() {
                     />
                     <span>oz</span>
                   </div>
+                  <label className="water-reminder-count">
+                    <span>How many reminders today?</span>
+                    <RequiredNumberInput
+                      fieldId="water-reminders"
+                      min={1}
+                      max={24}
+                      step={1}
+                      value={state.waterReminderCount}
+                      onValidityChange={setNumberFieldValidity}
+                      onCommit={(value) =>
+                        updateState((current) => ({
+                          ...current,
+                          waterReminderCount: Math.round(value),
+                        }))
+                      }
+                    />
+                  </label>
                   <strong>
                     {state.waterGoalOunces > 0
-                      ? `${Math.ceil(state.waterGoalOunces / 8)} reminders today`
+                      ? `${state.waterReminderCount} reminders today`
                       : 'Water reminders are off'}
                   </strong>
                 </div>
@@ -5218,7 +5524,7 @@ function DailyGooseApp() {
                           Math.round(
                             (state.waterGoalOunces - state.waterConsumedOunces) * 10,
                           ) / 10,
-                        )} oz to go · ${Math.ceil(state.waterGoalOunces / 8)} reminders`
+                        )} oz to go · ${state.waterReminderCount} reminders`
                     : 'Set a water goal in Edit today to turn reminders on.'}
                 </p>
                 <div className="water-manual-controls">
@@ -5240,7 +5546,7 @@ function DailyGooseApp() {
                     onClick={() => {
                       const servings = Math.max(
                         1,
-                        Math.ceil(state.waterGoalOunces / 8),
+                        state.waterReminderCount,
                       )
                       const servingOunces = state.waterGoalOunces / servings
                       logWater(state.waterConsumedOunces + servingOunces)
@@ -5673,6 +5979,217 @@ function DailyGooseApp() {
   )
 }
 
+const emptyLocalPreferences: LocalPreferences = {
+  setupComplete: false,
+  displayName: '',
+  azureDevOps: {
+    organizationUrl: '',
+    project: '',
+    repository: '',
+    currentUser: '',
+  },
+}
+
+function InitialSetupGate() {
+  const [status, setStatus] = useState<'loading' | 'required' | 'complete'>(
+    'loading',
+  )
+  const [draft, setDraft] = useState<LocalPreferences>(emptyLocalPreferences)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!window.dailyGoose) {
+      setStatus('complete')
+      return
+    }
+
+    let active = true
+    window.dailyGoose
+      .getLocalPreferences()
+      .then((preferences) => {
+        if (!active) {
+          return
+        }
+        setDraft(preferences)
+        setStatus(preferences.setupComplete ? 'complete' : 'required')
+      })
+      .catch(() => {
+        if (active) {
+          setStatus('required')
+        }
+      })
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  async function saveSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!window.dailyGoose) {
+      setStatus('complete')
+      return
+    }
+
+    setSaving(true)
+    setError('')
+    try {
+      await window.dailyGoose.saveLocalPreferences({
+        ...draft,
+        setupComplete: true,
+      })
+      setStatus('complete')
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'Unable to save your local setup.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (status === 'complete') {
+    return <DailyGooseApp />
+  }
+
+  if (status === 'loading') {
+    return (
+      <main className="setup-shell">
+        <section className="setup-card setup-loading">
+          <img src={appIconUrl} alt="" />
+          <h1>Just a Corporate Goose</h1>
+          <p>Preparing your local workspace...</p>
+        </section>
+      </main>
+    )
+  }
+
+  return (
+    <main className="setup-shell">
+      <form className="setup-card" onSubmit={saveSetup}>
+        <div className="setup-heading">
+          <img src={appIconUrl} alt="" />
+          <div>
+            <span className="wellness-kicker">First-time setup</span>
+            <h1>Let&apos;s personalize your goose</h1>
+          </div>
+        </div>
+        <p>
+          These settings are saved only in your Windows user profile. The app
+          never asks for or stores passwords, access tokens, or authentication
+          cookies.
+        </p>
+
+        <label>
+          <span>Your first name or preferred name</span>
+          <input
+            required
+            autoComplete="name"
+            value={draft.displayName}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                displayName: event.target.value,
+              }))
+            }
+          />
+        </label>
+
+        <fieldset>
+          <legend>Azure DevOps PR review connector</legend>
+          <p>
+            Sign-in stays in Azure CLI. These fields only tell the app which
+            repository to query.
+          </p>
+          <label>
+            <span>Organization URL</span>
+            <input
+              required
+              type="url"
+              placeholder="https://dev.azure.com/your-organization"
+              value={draft.azureDevOps.organizationUrl}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  azureDevOps: {
+                    ...current.azureDevOps,
+                    organizationUrl: event.target.value,
+                  },
+                }))
+              }
+            />
+          </label>
+          <div className="setup-field-grid">
+            <label>
+              <span>Project</span>
+              <input
+                required
+                value={draft.azureDevOps.project}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    azureDevOps: {
+                      ...current.azureDevOps,
+                      project: event.target.value,
+                    },
+                  }))
+                }
+              />
+            </label>
+            <label>
+              <span>Repository</span>
+              <input
+                required
+                value={draft.azureDevOps.repository}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    azureDevOps: {
+                      ...current.azureDevOps,
+                      repository: event.target.value,
+                    },
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <label>
+            <span>Azure DevOps account email</span>
+            <input
+              required
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={draft.azureDevOps.currentUser}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  azureDevOps: {
+                    ...current.azureDevOps,
+                    currentUser: event.target.value,
+                  },
+                }))
+              }
+            />
+          </label>
+        </fieldset>
+
+        {error && <div className="setup-error">{error}</div>}
+        <button className="primary-button giant" type="submit" disabled={saving}>
+          {saving ? 'Saving locally...' : 'Save and start my day'}
+        </button>
+        <small>
+          Saved to `%APPDATA%\dailygoose\local-config.json`. Setup will not
+          appear again after this file is saved.
+        </small>
+      </form>
+    </main>
+  )
+}
+
 function App() {
   const mode = new URLSearchParams(window.location.search).get('mode')
   if (mode === 'mini') {
@@ -5681,7 +6198,7 @@ function App() {
   if (mode === 'reminder') {
     return <ReminderPopup />
   }
-  return <DailyGooseApp />
+  return <InitialSetupGate />
 }
 
 export default App

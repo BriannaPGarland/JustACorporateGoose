@@ -1,4 +1,5 @@
 {
+  "setupComplete": true,
   "displayName": "Your name",
   "azureDevOps": {
     "organizationUrl": "https://dev.azure.com/your-organization",

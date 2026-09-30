@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('dailyGoose', {
   getTodaysMeetings: () => ipcRenderer.invoke('get-todays-meetings'),
   getReviewablePrs: () => ipcRenderer.invoke('get-reviewable-prs'),
   getLocalPreferences: () => ipcRenderer.invoke('get-local-preferences'),
+  saveLocalPreferences: (preferences) =>
+    ipcRenderer.invoke('save-local-preferences', preferences),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   onMiniUpdate: (callback) => {
     const handler = (_event, payload) => callback(payload)

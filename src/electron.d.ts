@@ -30,7 +30,10 @@ declare global {
       setActivityAwareness: (payload: { enabled: boolean; taskTitle: string }) => Promise<void>
       getTodaysMeetings: () => Promise<CalendarMeeting[]>
       getReviewablePrs: () => Promise<ReviewablePullRequest[]>
-      getLocalPreferences: () => Promise<{ displayName: string }>
+      getLocalPreferences: () => Promise<LocalPreferences>
+      saveLocalPreferences: (
+        preferences: LocalPreferences,
+      ) => Promise<LocalPreferences>
       openExternal: (url: string) => Promise<void>
       onMiniUpdate: (callback: (payload: MiniTimerPayload) => void) => () => void
       onReminderUpdate: (callback: (payload: ReminderPayload) => void) => () => void
@@ -89,5 +92,16 @@ declare global {
     author: string
     createdDate: string
     url: string
+  }
+
+  interface LocalPreferences {
+    setupComplete: boolean
+    displayName: string
+    azureDevOps: {
+      organizationUrl: string
+      project: string
+      repository: string
+      currentUser: string
+    }
   }
 }
